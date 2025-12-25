@@ -1,15 +1,14 @@
-import { Helmet } from "react-helmet-async";
+import { useEffect } from "react";
 import SpeedTest from "@/components/SpeedTest";
 import { Gauge } from "lucide-react";
 
 const Index = () => {
+  useEffect(() => {
+    document.title = "SpeedCheck - Internet Speed Test";
+  }, []);
+
   return (
     <>
-      <Helmet>
-        <title>SpeedCheck - Internet Speed Test</title>
-        <meta name="description" content="Test your internet connection speed instantly. Measure download, upload speeds and latency with our fast and accurate speed test tool." />
-      </Helmet>
-      
       <div className="min-h-screen bg-background flex flex-col">
         {/* Header */}
         <header className="w-full py-6 px-4">
