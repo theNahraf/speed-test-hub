@@ -1,92 +1,19 @@
-import { useState, useCallback } from "react";
 import { Play, Square, Download, Upload, Wifi, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import SpeedGauge from "./SpeedGauge";
 import MetricCard from "./MetricCard";
-
-type TestPhase = "idle" | "ping" | "download" | "upload" | "complete";
-
-interface TestResults {
-  ping: number;
-  download: number;
-  upload: number;
-  jitter: number;
-}
+import { useSpeedTest } from "@/hooks/useSpeedTest";
 
 const SpeedTest = () => {
-  const [phase, setPhase] = useState<TestPhase>("idle");
-  const [progress, setProgress] = useState(0);
-  const [currentSpeed, setCurrentSpeed] = useState(0);
-  const [results, setResults] = useState<TestResults>({
-    ping: 0,
-    download: 0,
-    upload: 0,
-    jitter: 0,
-  });
-
-  const simulateSpeedTest = useCallback(async () => {
-    // Reset
-    setProgress(0);
-    setCurrentSpeed(0);
-    setResults({ ping: 0, download: 0, upload: 0, jitter: 0 });
-
-    // Ping test
-    setPhase("ping");
-    const pingResult = Math.random() * 30 + 5;
-    const jitterResult = Math.random() * 5 + 1;
-    
-    for (let i = 0; i <= 100; i += 20) {
-      setProgress(i);
-      await new Promise(r => setTimeout(r, 100));
-    }
-    setResults(prev => ({ ...prev, ping: pingResult, jitter: jitterResult }));
-
-    // Download test
-    setPhase("download");
-    setProgress(0);
-    const downloadTarget = Math.random() * 200 + 50;
-    
-    for (let i = 0; i <= 100; i += 2) {
-      setProgress(i);
-      const variation = (Math.random() - 0.5) * 20;
-      const currentProgress = (i / 100) * downloadTarget;
-      setCurrentSpeed(Math.max(0, currentProgress + variation));
-      await new Promise(r => setTimeout(r, 50));
-    }
-    setCurrentSpeed(downloadTarget);
-    setResults(prev => ({ ...prev, download: downloadTarget }));
-
-    // Upload test
-    setPhase("upload");
-    setProgress(0);
-    const uploadTarget = Math.random() * 100 + 20;
-    
-    for (let i = 0; i <= 100; i += 2) {
-      setProgress(i);
-      const variation = (Math.random() - 0.5) * 15;
-      const currentProgress = (i / 100) * uploadTarget;
-      setCurrentSpeed(Math.max(0, currentProgress + variation));
-      await new Promise(r => setTimeout(r, 50));
-    }
-    setCurrentSpeed(uploadTarget);
-    setResults(prev => ({ ...prev, upload: uploadTarget }));
-
-    // Complete
-    setPhase("complete");
-    setProgress(100);
-  }, []);
-
-  const startTest = () => {
-    simulateSpeedTest();
-  };
-
-  const stopTest = () => {
-    setPhase("idle");
-    setProgress(0);
-    setCurrentSpeed(0);
-  };
-
-  const isRunning = phase !== "idle" && phase !== "complete";
+  const {
+    phase,
+    progress,
+    currentSpeed,
+    results,
+    startTest,
+    stopTest,
+    isRunning,
+  } = useSpeedTest();
 
   const getPhaseLabel = () => {
     switch (phase) {
@@ -213,6 +140,11 @@ const SpeedTest = () => {
           </p>
         </div>
       )}
+
+      {/* Info notice */}
+      <p className="text-muted-foreground text-xs text-center max-w-md">
+        Speed test uses Cloudflare's servers to measure your actual connection speed.
+      </p>
     </div>
   );
 };
