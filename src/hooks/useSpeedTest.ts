@@ -9,14 +9,22 @@ export interface TestResults {
   jitter: number;
 }
 
-// Use public CDN files for testing
-const TEST_FILES = [
-  "https://speed.cloudflare.com/__down?bytes=500000", // 500KB
-  "https://speed.cloudflare.com/__down?bytes=1000000", // 1MB
-  "https://speed.cloudflare.com/__down?bytes=5000000", // 5MB
+// Larger files for more accurate testing
+const DOWNLOAD_SIZES = [
+  1000000,   // 1MB - warm up
+  5000000,   // 5MB
+  10000000,  // 10MB
+  25000000,  // 25MB
 ];
 
-const UPLOAD_URL = "https://speed.cloudflare.com/__up";
+const UPLOAD_SIZES = [
+  500000,    // 500KB - warm up
+  1000000,   // 1MB
+  2000000,   // 2MB
+  5000000,   // 5MB
+];
+
+const PING_COUNT = 10; // More ping samples for accuracy
 
 export const useSpeedTest = () => {
   const [phase, setPhase] = useState<TestPhase>("idle");
@@ -32,11 +40,13 @@ export const useSpeedTest = () => {
   const abortControllerRef = useRef<AbortController | null>(null);
   const isRunningRef = useRef(false);
 
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
   const measurePing = async (signal: AbortSignal): Promise<{ ping: number; jitter: number }> => {
     const pings: number[] = [];
     const pingUrl = "https://speed.cloudflare.com/__down?bytes=0";
     
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < PING_COUNT; i++) {
       if (signal.aborted) throw new Error("Aborted");
       
       const start = performance.now();
@@ -50,14 +60,22 @@ export const useSpeedTest = () => {
       } catch (e) {
         if (signal.aborted) throw new Error("Aborted");
       }
-      setProgress((i + 1) * 20);
+      
+      setProgress(((i + 1) / PING_COUNT) * 100);
+      
+      // Small delay between pings
+      await delay(100);
     }
     
     if (pings.length === 0) return { ping: 0, jitter: 0 };
     
-    const avgPing = pings.reduce((a, b) => a + b, 0) / pings.length;
-    const jitter = pings.length > 1 
-      ? Math.sqrt(pings.reduce((sum, p) => sum + Math.pow(p - avgPing, 2), 0) / pings.length)
+    // Remove outliers (highest and lowest)
+    const sortedPings = [...pings].sort((a, b) => a - b);
+    const trimmedPings = sortedPings.slice(1, -1);
+    
+    const avgPing = trimmedPings.reduce((a, b) => a + b, 0) / trimmedPings.length;
+    const jitter = trimmedPings.length > 1 
+      ? Math.sqrt(trimmedPings.reduce((sum, p) => sum + Math.pow(p - avgPing, 2), 0) / trimmedPings.length)
       : 0;
     
     return { ping: avgPing, jitter };
@@ -65,11 +83,13 @@ export const useSpeedTest = () => {
 
   const measureDownload = async (signal: AbortSignal): Promise<number> => {
     const speeds: number[] = [];
+    let totalProgress = 0;
     
-    for (let i = 0; i < TEST_FILES.length; i++) {
+    for (let i = 0; i < DOWNLOAD_SIZES.length; i++) {
       if (signal.aborted) throw new Error("Aborted");
       
-      const url = TEST_FILES[i];
+      const bytes = DOWNLOAD_SIZES[i];
+      const url = `https://speed.cloudflare.com/__down?bytes=${bytes}`;
       const startTime = performance.now();
       
       try {
@@ -82,6 +102,7 @@ export const useSpeedTest = () => {
         if (!reader) continue;
         
         let bytesReceived = 0;
+        const expectedBytes = bytes;
         
         while (true) {
           const { done, value } = await reader.read();
@@ -89,56 +110,89 @@ export const useSpeedTest = () => {
           
           bytesReceived += value.length;
           const elapsed = (performance.now() - startTime) / 1000;
-          const speedMbps = (bytesReceived * 8) / (elapsed * 1000000);
-          setCurrentSpeed(speedMbps);
+          
+          if (elapsed > 0) {
+            const speedMbps = (bytesReceived * 8) / (elapsed * 1000000);
+            setCurrentSpeed(speedMbps);
+          }
+          
+          // Update progress within this file
+          const fileProgress = bytesReceived / expectedBytes;
+          const overallProgress = ((i + fileProgress) / DOWNLOAD_SIZES.length) * 100;
+          setProgress(overallProgress);
         }
         
         const elapsed = (performance.now() - startTime) / 1000;
-        const speedMbps = (bytesReceived * 8) / (elapsed * 1000000);
-        speeds.push(speedMbps);
+        if (elapsed > 0 && bytesReceived > 0) {
+          const speedMbps = (bytesReceived * 8) / (elapsed * 1000000);
+          // Skip first measurement (warm-up)
+          if (i > 0) {
+            speeds.push(speedMbps);
+          }
+        }
         
       } catch (e) {
         if (signal.aborted) throw new Error("Aborted");
       }
       
-      setProgress(((i + 1) / TEST_FILES.length) * 100);
+      totalProgress = ((i + 1) / DOWNLOAD_SIZES.length) * 100;
+      setProgress(totalProgress);
+      
+      // Brief pause between downloads
+      await delay(200);
     }
     
     if (speeds.length === 0) return 0;
-    return speeds.reduce((a, b) => a + b, 0) / speeds.length;
+    
+    // Use the average of all measurements (excluding warmup)
+    const avgSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+    return avgSpeed;
   };
 
   const measureUpload = async (signal: AbortSignal): Promise<number> => {
     const speeds: number[] = [];
-    const testSizes = [250000, 500000, 1000000]; // 250KB, 500KB, 1MB
     
-    for (let i = 0; i < testSizes.length; i++) {
+    for (let i = 0; i < UPLOAD_SIZES.length; i++) {
       if (signal.aborted) throw new Error("Aborted");
       
-      const data = new Blob([new ArrayBuffer(testSizes[i])]);
+      const size = UPLOAD_SIZES[i];
+      // Create random data for upload
+      const data = new Blob([new Uint8Array(size).fill(0)]);
       const startTime = performance.now();
       
       try {
-        await fetch(UPLOAD_URL, {
+        await fetch("https://speed.cloudflare.com/__up", {
           method: "POST",
           body: data,
           signal,
         });
         
         const elapsed = (performance.now() - startTime) / 1000;
-        const speedMbps = (testSizes[i] * 8) / (elapsed * 1000000);
-        speeds.push(speedMbps);
-        setCurrentSpeed(speedMbps);
+        if (elapsed > 0) {
+          const speedMbps = (size * 8) / (elapsed * 1000000);
+          setCurrentSpeed(speedMbps);
+          
+          // Skip first measurement (warm-up)
+          if (i > 0) {
+            speeds.push(speedMbps);
+          }
+        }
         
       } catch (e) {
         if (signal.aborted) throw new Error("Aborted");
       }
       
-      setProgress(((i + 1) / testSizes.length) * 100);
+      setProgress(((i + 1) / UPLOAD_SIZES.length) * 100);
+      
+      // Brief pause between uploads
+      await delay(200);
     }
     
     if (speeds.length === 0) return 0;
-    return speeds.reduce((a, b) => a + b, 0) / speeds.length;
+    
+    // Use the average of all measurements (excluding warmup)
+    const avgSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+    return avgSpeed;
   };
 
   const startTest = useCallback(async () => {
@@ -159,11 +213,15 @@ export const useSpeedTest = () => {
       const { ping, jitter } = await measurePing(signal);
       setResults(prev => ({ ...prev, ping, jitter }));
 
+      await delay(500);
+
       // Download test
       setPhase("download");
       setProgress(0);
       const download = await measureDownload(signal);
       setResults(prev => ({ ...prev, download }));
+
+      await delay(500);
 
       // Upload test
       setPhase("upload");
